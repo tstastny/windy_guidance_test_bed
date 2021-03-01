@@ -1,4 +1,4 @@
-# windy_guidance_test_bed
+# windy_guidance_test_bed (WIP)
 Python bound environment for testing wind-aware guidance logic (programmed in c++) for fixed-wing UAVs.
 
 :: Ubuntu 20.04, Python3.
