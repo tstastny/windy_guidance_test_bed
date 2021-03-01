@@ -17,8 +17,8 @@ plt.rcParams.update({'legend.frameon': True,
                      'axes.edgecolor': 'black'})
 
 
-# line 1 at pos (0.0, 0.0) with direction (1.0, 0.0)
-l1 = cpp.Line([0.0, 0.0], [3.0, -1.0])
+# loiter at pos (0.0, 0.0) with radius 100.0 in counter-clockwise direction
+loit = cpp.Loiter([0.0, 0.0], 100.0, -1)
 
 # arbitrary vehicle positions
 veh_pos_array = np.array([[north*2 for north in range(0, 100, 10)], [east-50 for east in range(0, 100, 10)]])
@@ -35,10 +35,11 @@ curv_list = [0.0] * vpa_len
 
 # test the vehicle positions
 for i in range(vpa_len):
-    l1.updateState([veh_pos_array[0, i], veh_pos_array[1, i]], veh_vel)  # input: pos, vel
-    clpt_array[:, i] = l1.getClosestPoint()
-    upt_array[:, i] = l1.getUnitTangent()
-    terr_list[i] = l1.getTrackError()
+    loit.updateState([veh_pos_array[0, i], veh_pos_array[1, i]], veh_vel)  # input: pos, vel
+    clpt_array[:, i] = loit.getClosestPoint()
+    upt_array[:, i] = loit.getUnitTangent()
+    terr_list[i] = loit.getTrackError()
+    curv_list[i] = loit.getCurvature()
 
 
 # ----------------------------------------------------------------------------------------------------------------------
