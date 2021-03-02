@@ -66,11 +66,11 @@ double NPFG::adjustPGain(const double wind_ratio, const double normalized_track_
 	double p_gain_max;
     if (wind_ratio > 1.0) {
         // excess wind case
-        p_gain_max = std::max(P_GAIN_MIN_MULT * (1.0 + wind_ratio) * (1.0 + wind_ratio) * fabs(path_curvature_), p_gain_);
+        p_gain_max = std::max(P_GAIN_MIN_MULT * (1.0 + wind_ratio) * (1.0 + wind_ratio) * abs(path_curvature_), p_gain_);
     }
     else {
         // lower wind case
-        p_gain_max = std::max(P_GAIN_MIN_MULT * 4.0 * fabs(path_curvature_), p_gain_);
+        p_gain_max = std::max(P_GAIN_MIN_MULT * 4.0 * abs(path_curvature_), p_gain_);
     }
 	// linearly interpolate between operator defined gain and minimum necessary gain when within proximity to track
 	return p_gain_max + normalized_track_error * (p_gain_ - p_gain_max);
@@ -356,8 +356,11 @@ bool NPFG::backwardsSolutionOK(const double wind_speed, const double airspeed, c
     }
 } // backwardsSolutionOK
 
-void NPFG::evaluate(const Eigen::Vector2d &ground_vel, const Eigen::Vector2d &wind_vel, const Eigen::Vector2d &track_error_vec, const Eigen::Vector2d &unit_path_tangent)
+void NPFG::evaluate(const Eigen::Vector2d &aircraft_pos, const Eigen::Vector2d &ground_vel, const Eigen::Vector2d &wind_vel,
+    const Eigen::Vector2d& closest_point_on_path, const Eigen::Vector2d& unit_path_tangent, const double& signed_track_error)
 {
+    const Eigen::Vector2d track_error_vec = closest_point_on_path - aircraft_pos;
+    const double track_error = abs(signed_track_error);
     const double ground_speed = ground_vel.norm();
 
     Eigen::Vector2d air_vel = ground_vel - wind_vel;
@@ -365,7 +368,6 @@ void NPFG::evaluate(const Eigen::Vector2d &ground_vel, const Eigen::Vector2d &wi
 
     const double wind_speed = wind_vel.norm();
 
-    const double track_error = track_error_vec.norm();
     Eigen::Vector2d unit_track_error;
     if (track_error < EPSILON) {
         unit_track_error = track_error_vec;
@@ -376,7 +378,7 @@ void NPFG::evaluate(const Eigen::Vector2d &ground_vel, const Eigen::Vector2d &wi
 
     track_error_bound_ = calcTrackErrorBound(ground_speed);
 
-    const double normalized_track_error = constrain(fabs(track_error / track_error_bound_), 0.0, 1.0);
+    const double normalized_track_error = constrain(track_error / track_error_bound_, 0.0, 1.0);
 
     const double look_ahead_angle = calcLookAheadAngle(normalized_track_error);
 

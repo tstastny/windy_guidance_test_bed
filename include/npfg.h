@@ -40,7 +40,8 @@ class NPFG {
         void setWindRatioBuf(double wind_ratio_buf) { wind_ratio_buf_ = wind_ratio_buf; }
 
         // public functions
-        void evaluate(const Eigen::Vector2d &ground_vel, const Eigen::Vector2d &wind_vel, const Eigen::Vector2d &track_error_vec, const Eigen::Vector2d &unit_path_tangent);
+        void evaluate(const Eigen::Vector2d &aircraft_pos, const Eigen::Vector2d &ground_vel, const Eigen::Vector2d &wind_vel,
+            const Eigen::Vector2d& closest_point_on_path, const Eigen::Vector2d& unit_path_tangent, const double& signed_track_error);
 
     private:
 
