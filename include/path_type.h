@@ -1,7 +1,7 @@
 #ifndef PATH_TYPE_H_
 #define PATH_TYPE_H_
 
-// TODO: need a better name..
+// TODO: need a better name.. path_lib? (if keeping everything here..), path_segment? (if separating into derived class headers)
 
 #include <Eigen/Eigen>
 #include <math.h>
