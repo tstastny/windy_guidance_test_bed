@@ -35,8 +35,8 @@ class NPFG {
         void setNominalHeadingRate(double nom_heading_rate) { nom_heading_rate_ = std::max(nom_heading_rate, 0.01); }
         void setNTEFraction(double nte_fraction) { inv_nte_fraction_ = 1.0 / std::max(nte_fraction, 0.01); }
         void setPathCurvature(double curvature) { path_curvature_ = curvature; }
-        void setPGain(double p_gain) { p_gain_ = p_gain; }
-        void setTimeConstant(double time_const) { time_const_ = time_const; }
+        void setPeriod(double period) { period_ = period; }
+        void setDamping(double damping) { damping_ = damping; }
         void setWindRatioBuf(double wind_ratio_buf) { wind_ratio_buf_ = wind_ratio_buf; }
 
         // public functions
@@ -62,6 +62,9 @@ class NPFG {
         double p_gain_adj_;             // (possibly adjusted) proportional gain (accounting for minimum)
         double time_const_;             // look-ahead time constant [s]
 
+        double period_;
+        double damping_;
+
         double airspeed_nom_;           // nominal airspeed reference [m/s]
         double airspeed_max_;           // maximum airspeed reference [m/s]
         double airspeed_ref_;           // airspeed reference [m/s]
@@ -82,6 +85,8 @@ class NPFG {
         double nom_heading_rate_;           // maximum heading rate at nominal airspeed (user is responsible for computing externally) [rad/s]
 
         // private functions
+        void calcPGain();
+        void calcTimeConst();
         double calcTrackErrorBound(const double ground_speed);
         double calcLookAheadAngle(const double normalized_track_error);
         Eigen::Vector2d calcBearingVec(double &track_proximity, double &inv_track_proximity,
@@ -103,6 +108,8 @@ class NPFG {
             const double wind_speed, const double airspeed, const double feas, const double track_proximity, const double p_gain_adj, bool use_backwards_solution);
         double calcLateralAccel(const Eigen::Vector2d &air_vel, const Eigen::Vector2d &air_vel_ref, const double airspeed, const double p_gain_adj);
         bool backwardsSolutionOK(const double wind_speed, const double airspeed, const double min_ground_speed, const double track_error);
+        double adjustLateralAccelForCurvature(const Eigen::Vector2d& unit_path_tangent, const Eigen::Vector2d& ground_vel, const Eigen::Vector2d& wind_vel,
+            const double airspeed, const double wind_speed, const double track_error, const double inv_track_proximity);
 
 }; // class NPFG
 

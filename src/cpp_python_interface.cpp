@@ -53,8 +53,8 @@ PYBIND11_MODULE(cpp_functions, m)
         .def("setNominalHeadingRate", &NPFG::setNominalHeadingRate)
         .def("setNTEFraction", &NPFG::setNTEFraction)
         .def("setPathCurvature", &NPFG::setPathCurvature)
-        .def("setPGain", &NPFG::setPGain)
-        .def("setTimeConstant", &NPFG::setTimeConstant)
+        .def("setPeriod", &NPFG::setPeriod)
+        .def("setDamping", &NPFG::setDamping)
         .def("setWindRatioBuf", &NPFG::setWindRatioBuf)
         .def("evaluate", &NPFG::evaluate);
 

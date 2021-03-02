@@ -19,7 +19,7 @@ import pysrc.plotting as pl
 # simulation setup
 
 # define UAV initial state
-uav = se.Aircraft(np.array([0.0, 50.0]),    # position
+uav = se.Aircraft(np.array([0.0, 10.0]),    # position
                   10.0,                     # airspeed
                   np.deg2rad(-90.0),        # heading
                   0.0,                      # roll
@@ -50,8 +50,8 @@ npfg.setMinGroundSpeedEMax(6.0)
 npfg.setNominalHeadingRate(9.81 * np.tan(np.deg2rad(35.0)) / airspeed_nom)
 npfg.setNTEFraction(0.5)
 # tuning
-npfg.setPGain(0.11)
-npfg.setTimeConstant(7.0)
+npfg.setPeriod(30)
+npfg.setDamping(0.25)
 roll_lim = np.deg2rad(35.0)
 # other params
 npfg.setWindRatioBuf(0.1)
@@ -95,7 +95,8 @@ sim_data['environment'] = {
 }
 
 sim_data['path following'] = {
-    'track error': np.zeros(n_sim)
+    'track error': np.zeros(n_sim),
+    'track error bound': np.zeros(n_sim)
 }
 
 
@@ -143,6 +144,7 @@ for k in range(n_sim):
 
     # path following
     sim_data['path following']['track error'][k] = line1.getTrackError()
+    sim_data['path following']['track error bound'][k] = npfg.getTrackErrorBound()
 
     # integrate (simple euler) -----------------------------------------------------------------------------------------
     uav.update_state(uav.state + dt_sim * uav.d_state_dt(control, wind.vel))
@@ -246,6 +248,7 @@ ax_roll.plot(sim_data['time'], np.rad2deg(sim_data['aircraft states']['roll']), 
 # track error plot ----------------------------------------
 ax_te = fig_states.add_subplot(grid_states[3], xlabel='Time [s]', ylabel='Track Error [m]')
 ax_te.plot([sim_data['time'][0], sim_data['time'][-1]], [0.0, 0.0], color=ref_color)
+ax_te.plot(sim_data['time'], sim_data['path following']['track error bound'], color=ref_color, linestyle='-.')
 ax_te.plot(sim_data['time'], sim_data['path following']['track error'], color=state_color)
 
 # ----------------------------------------------------------------------------------------------------------------------

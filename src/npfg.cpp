@@ -11,6 +11,8 @@ NPFG::NPFG() :
     p_gain_(0.11),
     p_gain_adj_(0.11),
     time_const_(7.0),
+    period_(20.0),
+    damping_(0.7071),
     airspeed_nom_(14.0),
     airspeed_max_(20.0),
     airspeed_ref_(14.0),
@@ -26,6 +28,16 @@ NPFG::NPFG() :
     en_backwards_solution_(false),
     nom_heading_rate_(0.6)
 {} // NPFG
+
+void NPFG::calcPGain()
+{
+    p_gain_ = 4.0 * M_PI * damping_ / period_;
+}
+
+void NPFG::calcTimeConst()
+{
+    time_const_ = period_ * damping_;
+}
 
 double NPFG::calcTrackErrorBound(const double ground_speed)
 {
@@ -51,8 +63,8 @@ Eigen::Vector2d NPFG::calcBearingVec(double &track_proximity, double &inv_track_
         calculate the bearing vector and track proximity smoother from the look-ahead angle mapping
     */
 
-    const double cos_look_ahead_angle = cosf(look_ahead_angle);
-	const double sin_look_ahead_angle = sinf(look_ahead_angle);
+    const double cos_look_ahead_angle = cos(look_ahead_angle);
+	const double sin_look_ahead_angle = sin(look_ahead_angle);
 
     track_proximity = sin_look_ahead_angle * sin_look_ahead_angle;
     inv_track_proximity = cos_look_ahead_angle * cos_look_ahead_angle;
@@ -62,18 +74,20 @@ Eigen::Vector2d NPFG::calcBearingVec(double &track_proximity, double &inv_track_
 
 double NPFG::adjustPGain(const double wind_ratio, const double normalized_track_error)
 {
-    // take maximum of minimum gain for given curvature and wind ratio or operator defined gain
-	double p_gain_max;
-    if (wind_ratio > 1.0) {
-        // excess wind case
-        p_gain_max = std::max(P_GAIN_MIN_MULT * (1.0 + wind_ratio) * (1.0 + wind_ratio) * abs(path_curvature_), p_gain_);
-    }
-    else {
-        // lower wind case
-        p_gain_max = std::max(P_GAIN_MIN_MULT * 4.0 * abs(path_curvature_), p_gain_);
-    }
-	// linearly interpolate between operator defined gain and minimum necessary gain when within proximity to track
-	return p_gain_max + normalized_track_error * (p_gain_ - p_gain_max);
+//    // take maximum of minimum gain for given curvature and wind ratio or operator defined gain
+//	double p_gain_max;
+//    if (wind_ratio > 1.0) {
+//        // excess wind case
+//        p_gain_max = std::max(P_GAIN_MIN_MULT * (1.0 + wind_ratio) * (1.0 + wind_ratio) * abs(path_curvature_), p_gain_);
+//    }
+//    else {
+//        // lower wind case
+//        p_gain_max = std::max(P_GAIN_MIN_MULT * 4.0 * abs(path_curvature_), p_gain_);
+//    }
+//	// linearly interpolate between operator defined gain and minimum necessary gain when within proximity to track
+//	return p_gain_max + normalized_track_error * (p_gain_ - p_gain_max);
+
+    return p_gain_;
 } // adjustPGain
 
 double NPFG::calcMinGroundSpeed(const double normalized_track_error)
@@ -104,7 +118,7 @@ double NPFG::projectAirspOnBearing(const double airspeed, const double wind_cros
 
 int NPFG::bearingIsFeasible(const double wind_cross_bearing, const double wind_dot_bearing, const double airspeed, const double wind_speed)
 {
-    return (fabs(wind_cross_bearing) < airspeed) && ((wind_dot_bearing > 0.0) || (wind_speed < airspeed));
+    return (abs(wind_cross_bearing) < airspeed) && ((wind_dot_bearing > 0.0) || (wind_speed < airspeed));
 } // bearingIsFeasible
 
 double NPFG::calcBearingFeas(const double wind_cross_bearing, const double wind_dot_bearing, const double airspeed, const double wind_speed)
@@ -292,7 +306,7 @@ double NPFG::calcRefAirspeed(const Eigen::Vector2d &wind_vel, const Eigen::Vecto
             }
             else {
                 const double airsp_dot_bearing = 0.0; // right angle to the bearing line gives minimum airspeed usage, zero forward ground speed
-                airspeed_ref = fabs(wind_cross_bearing);
+                airspeed_ref = abs(wind_cross_bearing);
             }
         }
         else {
@@ -359,6 +373,10 @@ bool NPFG::backwardsSolutionOK(const double wind_speed, const double airspeed, c
 void NPFG::evaluate(const Eigen::Vector2d &aircraft_pos, const Eigen::Vector2d &ground_vel, const Eigen::Vector2d &wind_vel,
     const Eigen::Vector2d& closest_point_on_path, const Eigen::Vector2d& unit_path_tangent, const double& signed_track_error)
 {
+
+    calcPGain();
+    calcTimeConst();
+
     const Eigen::Vector2d track_error_vec = closest_point_on_path - aircraft_pos;
     const double track_error = abs(signed_track_error);
     const double ground_speed = ground_vel.norm();
@@ -376,6 +394,8 @@ void NPFG::evaluate(const Eigen::Vector2d &aircraft_pos, const Eigen::Vector2d &
         unit_track_error = track_error_vec / track_error;
     }
 
+
+
     track_error_bound_ = calcTrackErrorBound(ground_speed);
 
     const double normalized_track_error = constrain(track_error / track_error_bound_, 0.0, 1.0);
@@ -385,8 +405,10 @@ void NPFG::evaluate(const Eigen::Vector2d &aircraft_pos, const Eigen::Vector2d &
     double track_proximity, inv_track_proximity;
     bearing_vec_ = calcBearingVec(track_proximity, inv_track_proximity, unit_track_error, unit_path_tangent, look_ahead_angle);
 
-    // *feedback airspeed for gain adjustment
-    p_gain_adj_ = adjustPGain(wind_speed / airspeed, inv_track_proximity);
+//    // *feedback airspeed for gain adjustment
+//    p_gain_adj_ = adjustPGain(wind_speed / airspeed, inv_track_proximity);
+
+    p_gain_adj_ = p_gain_;
 
     double wind_cross_bearing, wind_dot_bearing;
     trigWindToBearing(wind_cross_bearing, wind_dot_bearing, wind_vel, bearing_vec_);
@@ -413,7 +435,30 @@ void NPFG::evaluate(const Eigen::Vector2d &aircraft_pos, const Eigen::Vector2d &
     }
 
     // air velocity curvature adjustment -- feedback
-    adjustRefAirVelForCurvature(air_vel_ref, wind_vel, unit_path_tangent, wind_speed, airspeed, feas_, track_proximity, p_gain_adj_, use_backwards_solution);
+//    adjustRefAirVelForCurvature(air_vel_ref, wind_vel, unit_path_tangent, wind_speed, airspeed, feas_, track_proximity, p_gain_adj_, use_backwards_solution);
 
-    lateral_accel_ = calcLateralAccel(air_vel, air_vel_ref, airspeed, p_gain_adj_);
+    const double lat_accel_curv_adj = adjustLateralAccelForCurvature(unit_path_tangent, ground_vel, wind_vel, airspeed, wind_speed, track_error, inv_track_proximity);
+    lateral_accel_ = calcLateralAccel(air_vel, air_vel_ref, airspeed, p_gain_adj_) + lat_accel_curv_adj;
 } // evaluate
+
+double NPFG::adjustLateralAccelForCurvature(const Eigen::Vector2d& unit_path_tangent, const Eigen::Vector2d& ground_vel, const Eigen::Vector2d& wind_vel,
+    const double airspeed, const double wind_speed, const double track_error, const double inv_track_proximity)
+{
+    // solve the wind triangle w.r.t. unit path tangent
+    double wind_cross_upt, wind_dot_upt;
+    trigWindToBearing(wind_cross_upt, wind_dot_upt, wind_vel, unit_path_tangent);
+
+    // determine feasibility of following unit path tangent
+    const double feas0 = calcBearingFeas(wind_cross_upt, wind_dot_upt, airspeed, wind_speed);
+
+    // calculate on track speed ratio
+    const double airspeed_dot_upt = projectAirspOnBearing(airspeed, wind_cross_upt);
+    const double speed_ratio = 1.0 + ((abs(airspeed_dot_upt) < EPSILON) ? 0.0 : wind_dot_upt / airspeed_dot_upt); // TODO: is that 1.0 always ok?
+
+    // ground relative turn rate
+    const double err_per_radius = path_curvature_ * track_error;
+    const double turn_rate = (err_per_radius < 1.0 - EPSILON) ?
+        path_curvature_ * std::max(ground_vel.dot(unit_path_tangent), 0.0) / (1.0 - err_per_radius) : 0.0; // TODO: is this correct handling?
+
+    return turn_rate * speed_ratio * feas_ * feas0 * inv_track_proximity;
+}
