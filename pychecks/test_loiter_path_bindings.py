@@ -1,3 +1,5 @@
+# Created by Thomas Stastny <tstastny@ethz.ch>, 03/2021
+
 # pybind
 import sys
 sys.path.append('build')
