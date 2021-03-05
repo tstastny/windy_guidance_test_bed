@@ -19,25 +19,27 @@ import pysrc.plotting as pl
 # simulation setup
 
 # define UAV initial state
-uav = se.Aircraft(np.array([0.0, 10.0]),    # position
-                  10.0,                     # airspeed
+tc_roll = 0.5
+uav = se.Aircraft(np.array([-20.0, 0.0]),    # position
+                  12.0,                     # airspeed
                   np.deg2rad(-90.0),        # heading
                   0.0,                      # roll
                   1.0,                      # airspeed time constant
-                  0.5)                      # roll time constant
+                  tc_roll)                      # roll time constant
 
 # paths
-line1 = cpp.Line([0.0, 0.0],  # position
-                 [1.0, 0.0])  # orientation
+loit1 = cpp.Loiter([0.0, 0.0],  # position
+                   20.0,        # radius
+                   1)           # dir
 
 # disturbances
-wind = se.Wind(np.array([0.0, -5.0]))
+wind = se.Wind(np.array([0.0, 0.0]))
 
 # control
 npfg = cpp.NPFG()
 # airspeed reference compensation
-airspeed_nom = 10.0
-airspeed_max = 16.0
+airspeed_nom = 12.0
+airspeed_max = 12.0
 min_ground_speed_g = 0.0
 npfg.enableFeedForwardAirVelRef(True)
 npfg.enableMinGroundSpeed(False)
@@ -50,15 +52,17 @@ npfg.setMinGroundSpeedEMax(6.0)
 npfg.setNominalHeadingRate(9.81 * np.tan(np.deg2rad(35.0)) / airspeed_nom)
 npfg.setNTEFraction(0.5)
 # tuning
-npfg.setPeriod(30)
-npfg.setDamping(0.25)
-roll_lim = np.deg2rad(35.0)
+period_0 = 30
+damping_0 = 0.25
+npfg.setPeriod(period_0)
+npfg.setDamping(damping_0)
+roll_lim = np.deg2rad(45.0)
 # other params
 npfg.setWindRatioBuf(0.1)
 npfg.enableBackwardsSolution(False)
 
 # timing TODO: organize in config dict
-t_sim = 20                              # simulation time [s]
+t_sim = 180                              # simulation time [s]
 dt_sim = 0.01                           # simulation time step [s]
 dt_ctrl = np.min([0.1, dt_sim])         # control time step [s]
 ctrl_interval = int(dt_ctrl / dt_sim)
@@ -71,6 +75,14 @@ est_interval = int(dt_est / dt_sim)
 
 n_sim = int(t_sim /dt_sim) + 1
 sim_data = {'time': np.array([i *dt_sim for i in range(n_sim)])}
+
+sim_data['tuning'] = {
+    'max nom period': np.zeros(n_sim),
+    'min nom period': np.zeros(n_sim),
+    'max turn rate': np.zeros(n_sim),
+    'no wind turn rate': np.zeros(n_sim),
+    'nom period': np.zeros(n_sim)
+}
 
 sim_data['aircraft states'] = {
     'position': np.zeros([2, n_sim]),
@@ -104,7 +116,10 @@ sim_data['environment'] = {
 
 sim_data['path following'] = {
     'track error': np.zeros(n_sim),
-    'track error bound': np.zeros(n_sim)
+    'track error bound': np.zeros(n_sim),
+    'ff accel': np.zeros(n_sim),
+    'feas': np.zeros(n_sim),
+    'feas0': np.zeros(n_sim)
 }
 
 
@@ -112,11 +127,11 @@ sim_data['path following'] = {
 # ----------------------------------------------------------------------------------------------------------------------
 # simulate TODO: move all this to a class
 
+d_airspeed = 0  # error in airspeed measurement
+
 # init
 wind.update(0)
 wind_vel_est = wind.vel
-d_wind_speed = 2
-d_wind_dir = np.deg2rad(-15)
 # simulate
 for k in range(n_sim):
 
@@ -128,7 +143,8 @@ for k in range(n_sim):
 
         # propagate (note: at k=0 no delta) -- assuming something similar to EKF tuned for 1.0m/s/s wind noise
         # wind_vel_est = (wind.vel - wind_vel_est) / 1.0 * est_interval * dt_sim + wind_vel_est
-        wind_vel_est = (wind.speed() + d_wind_speed) * np.array([np.cos(wind.dir() + d_wind_dir), np.sin(wind.dir() + d_wind_dir)])
+        ground_vel = uav.vel(wind.vel)
+        wind_vel_est = ground_vel - (uav.airspeed() + d_airspeed) * (ground_vel - wind.vel) / np.linalg.norm(ground_vel - wind.vel)
         # wind_vel_est[0] = 0
         # wind_vel_est[1] = 0
 
@@ -136,18 +152,33 @@ for k in range(n_sim):
     if np.mod(k, ctrl_interval) == 0 or k == 0:
 
         # evaluate path
-        line1.updateState(uav.pos(), uav.vel(wind.vel))  # assume we know the ground vel..
+        loit1.updateState(uav.pos(), uav.vel(wind.vel))  # assume we know the ground vel..
 
         # evaluate guidance logic
-        npfg.setPathCurvature(line1.getCurvature())
+        npfg.setPathCurvature(loit1.getCurvature())
         npfg.evaluate(uav.pos(), uav.vel(wind.vel), wind_vel_est,
-                      line1.getClosestPoint(), line1.upt(), line1.getTrackError())
+                      loit1.getClosestPoint(), loit1.getUnitTangent(), loit1.getTrackError())
         lat_accel = npfg.getLateralAccel()
         roll_ref = np.clip(np.arctan(lat_accel / uav.ONE_G), -roll_lim, roll_lim)  # TODO: encapsulate
         airspeed_ref = npfg.getAirspeedRef()
         control = (roll_ref, airspeed_ref)
 
     # output -----------------------------------------------------------------------------------------------------------
+
+    # tuning bounds
+    nowind_turn_rate = uav.airspeed() * loit1.getCurvature()
+    crit_wind_factor = 2.0 * (1 - np.sqrt(1.0 - wind.speed() / uav.airspeed()))
+    sim_data['tuning']['max nom period'][k] = \
+        4.0 * np.pi * damping_0 / (nowind_turn_rate * crit_wind_factor) if damping_0 < 0.7071 else np.pi / (damping_0 * nowind_turn_rate * crit_wind_factor)
+    sim_data['tuning']['min nom period'][k] = \
+        2.0 * np.pi * (np.sqrt(damping_0**2 * (nowind_turn_rate * crit_wind_factor * tc_roll)**2 + nowind_turn_rate * crit_wind_factor * tc_roll) \
+        + damping_0 * (nowind_turn_rate * crit_wind_factor * tc_roll - 1)) / nowind_turn_rate / crit_wind_factor \
+        if nowind_turn_rate * crit_wind_factor > 0.0 else np.pi * tc_roll / damping_0
+    sim_data['tuning']['max turn rate'][k] = \
+        8.0 * damping_0**2 / (crit_wind_factor * tc_roll * (4.0 * damping_0**2 + 1.0)) if damping_0 < 0.7071 else \
+        (4.0 * damping_0**2 + 1.0) / (8.0 * crit_wind_factor * tc_roll * damping_0**2)
+    sim_data['tuning']['no wind turn rate'][k] = nowind_turn_rate
+    sim_data['tuning']['nom period'][k] = period_0
 
     # aircraft states
     sim_data['aircraft states']['position'][:, k] = uav.pos()
@@ -168,16 +199,19 @@ for k in range(n_sim):
     sim_data['aircraft estimates']['wind vel'][:, k] = wind_vel_est
     sim_data['aircraft estimates']['wind speed'][k] = np.linalg.norm(wind_vel_est)
     sim_data['aircraft estimates']['wind dir'][k] = np.arctan2(wind_vel_est[1], wind_vel_est[0]) if sim_data['aircraft estimates']['wind speed'][k] > 1.0e-1 else np.nan
-    print(np.arctan2(wind_vel_est[1], wind_vel_est[0]))
+
     # environment
     sim_data['environment']['wind vel'][:, k] = wind.vel
     sim_data['environment']['wind speed'][k] = wind.speed()
     sim_data['environment']['wind dir'][k] = wind.dir()
 
     # path following
-    line1.updateState(uav.pos(), uav.vel(wind.vel))  # get ground truth values
-    sim_data['path following']['track error'][k] = line1.getTrackError()
+    loit1.updateState(uav.pos(), uav.vel(wind.vel))  # get ground truth values
+    sim_data['path following']['track error'][k] = loit1.getTrackError()
     sim_data['path following']['track error bound'][k] = npfg.getTrackErrorBound()
+    sim_data['path following']['ff accel'][k] = npfg.getLateralAccelCurvAdj()
+    sim_data['path following']['feas'][k] = npfg.getBearingFeas()
+    sim_data['path following']['feas0'][k] = npfg.getBearingFeas0()
 
     # integrate (simple euler) -----------------------------------------------------------------------------------------
     uav.update_state(uav.state + dt_sim * uav.d_state_dt(control, wind.vel))
@@ -209,40 +243,30 @@ fig_pos2d = plt.figure()
 fig_pos2d.suptitle('2D Position')
 ax_pos2d = fig_pos2d.add_subplot(aspect='equal', xlabel='East [m]', ylabel='North [m]')
 ax_pos2d.grid()
-sz_marker = 5
+sz_marker = 10
 
-# line
-line_pos = line1.pos()
-line_upt = line1.upt()
-len_upt = 5.0
-ax_pos2d.scatter(line_pos[1], line_pos[0], s=sz_marker, marker='o', color=ref_color)
-ax_pos2d.quiver(line_pos[1], line_pos[0], line_upt[1] * len_upt, line_upt[0] * len_upt, color=ref_color)
-ax_pos2d.plot(line_pos[1] + np.array([0.0, line_upt[1] * 1000.0]),
-              line_pos[0] + np.array([0.0, line_upt[0] * 1000.0]),  # TODO: truncation function for line plot
+# loiter
+threesixty = np.linspace(-np.pi, np.pi, 101)
+loit_pos = loit1.pos()
+ax_pos2d.plot(loit_pos[1] + loit1.radius() * np.sin(threesixty),
+              loit_pos[0] + loit1.radius() * np.cos(threesixty),
               color=ref_color,
               label='Path')
 
 # aircraft position
+ax_pos2d.plot(sim_data['aircraft states']['position'][1],
+              sim_data['aircraft states']['position'][0],
+              color=state_color,
+              label='Aircraft')
 ax_pos2d.scatter(sim_data['aircraft states']['position'][1, 0],
                  sim_data['aircraft states']['position'][0, 0],
                  s=sz_marker, marker='^', color='tab:green')  # start position
 ax_pos2d.scatter(sim_data['aircraft states']['position'][1, -1],
                  sim_data['aircraft states']['position'][0, -1],
                  s=sz_marker, marker='s', color='tab:red')  # end position
-ax_pos2d.plot(sim_data['aircraft states']['position'][1],
-              sim_data['aircraft states']['position'][0],
-              color=state_color,
-              label='Aircraft')
 
 ax_pos2d.legend()
 
-# axis limits
-bb_margin = 5
-pos_min, pos_max = pl.position_bounding_box(
-    np.concatenate((sim_data['aircraft states']['position'][1], np.array([line_pos[1]]))),
-    np.concatenate((sim_data['aircraft states']['position'][0], np.array([line_pos[0]]))))
-ax_pos2d.set(xlim=[pos_min[0]-bb_margin, pos_max[0]+bb_margin],
-             ylim=[pos_min[1]-bb_margin, pos_max[1]+bb_margin])
 
 # ----------------------------------------------------------------------------------------------------------------------
 # aircraft states plot
@@ -276,6 +300,8 @@ ax_heading.plot(sim_data['time'], np.rad2deg(sim_data['aircraft states']['headin
 ax_roll = fig_states.add_subplot(grid_states[2], xticklabels=[], ylabel='Roll [deg]')
 ax_roll.plot(sim_data['time'], np.rad2deg(sim_data['aircraft controls']['roll ref']), color=ref_color)
 ax_roll.plot(sim_data['time'], np.rad2deg(sim_data['aircraft states']['roll']), color=state_color)
+# ax_roll = fig_states.add_subplot(grid_states[2], xticklabels=[], ylabel='FF Lat Accel [m/s2]')
+# ax_roll.plot(sim_data['time'], np.rad2deg(sim_data['path following']['ff accel']), color=ref_color)
 
 # track error plot ----------------------------------------
 ax_te = fig_states.add_subplot(grid_states[3], xlabel='Time [s]', ylabel='Track Error [m]')
@@ -310,6 +336,31 @@ ax_speeds.legend()
 ax_wind_dir = fig_speeds.add_subplot(grid_speeds[-1], xticklabels=[], ylabel='Wind Dir. [deg]')
 ax_wind_dir.plot(sim_data['time'], np.rad2deg(sim_data['environment']['wind dir']), color=ref_color)
 ax_wind_dir.plot(sim_data['time'], np.rad2deg(sim_data['aircraft estimates']['wind dir']), color=state_color)
+
+# ----------------------------------------------------------------------------------------------------------------------
+# tuning plot
+
+fig_tuning = plt.figure()
+fig_tuning.suptitle('Tuning')
+grid_tuning = plt.GridSpec(3, 1)
+
+# period plot ----------------------------------------
+ax_period = fig_tuning.add_subplot(grid_tuning[0], xticklabels=[], ylabel='Period [s]')
+ax_period.plot(sim_data['time'], sim_data['tuning']['max nom period'], linestyle='-.', color=ref_color, label='Max. Nom. Period')
+ax_period.plot(sim_data['time'], sim_data['tuning']['min nom period'], color=ref_color, label='Min. Nom. Period')
+ax_period.plot(sim_data['time'], sim_data['tuning']['nom period'], color=state_color, label='Nom. Period')
+ax_period.legend()
+
+# turn rate plot ----------------------------------------
+ax_tr = fig_tuning.add_subplot(grid_tuning[1], xticklabels=[], ylabel=' (no wind) Turn Rate [deg/s]')
+ax_tr.plot(sim_data['time'], np.rad2deg(sim_data['tuning']['max turn rate']), color=ref_color, label='Max. Turn Rate')
+ax_tr.plot(sim_data['time'], np.rad2deg(sim_data['tuning']['no wind turn rate']), color=state_color, label='Turn Rate')
+ax_tr.legend()
+
+# turn rate plot ----------------------------------------
+ax_feas = fig_tuning.add_subplot(grid_tuning[2], xticklabels=[], ylabel='feas')
+ax_feas.plot(sim_data['time'], sim_data['path following']['feas'], color=ref_color, label='feas')
+ax_feas.plot(sim_data['time'], sim_data['path following']['feas0'], color=state_color, label='feas0')
 
 plt.show()
 

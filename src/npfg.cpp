@@ -4,7 +4,9 @@
 
 NPFG::NPFG() :
     feas_(1.0),
+    feas0_(0.0),
     lateral_accel_(0.0),
+    lateral_accel_curv_adj_(0.0),
     path_curvature_(0.0),
     track_error_bound_(1.0),
     bearing_vec_(Eigen::Vector2d(1.0, 0.0)),
@@ -311,7 +313,7 @@ double NPFG::calcRefAirspeed(const Eigen::Vector2d &wind_vel, const Eigen::Vecto
         }
         else {
             // infeasible
-            airspeed_ref = (en_wind_excess_regulation_) ? airspeed_max_ : airspeed_nom_;;
+            airspeed_ref = (en_wind_excess_regulation_) ? airspeed_max_ : airspeed_nom_;
         }
     }
 
@@ -435,30 +437,53 @@ void NPFG::evaluate(const Eigen::Vector2d &aircraft_pos, const Eigen::Vector2d &
     }
 
     // air velocity curvature adjustment -- feedback
-//    adjustRefAirVelForCurvature(air_vel_ref, wind_vel, unit_path_tangent, wind_speed, airspeed, feas_, track_proximity, p_gain_adj_, use_backwards_solution);
+//    adjustRefAirVelForCurvatureOld(air_vel_ref, wind_vel, unit_path_tangent, wind_speed, airspeed, feas_, track_proximity, p_gain_adj_, use_backwards_solution);
 
-    const double lat_accel_curv_adj = adjustLateralAccelForCurvature(unit_path_tangent, ground_vel, wind_vel, airspeed, wind_speed, track_error, inv_track_proximity);
-    lateral_accel_ = calcLateralAccel(air_vel, air_vel_ref, airspeed, p_gain_adj_) + lat_accel_curv_adj;
+    lateral_accel_curv_adj_ = adjustLateralAccelForCurvature(unit_path_tangent, ground_vel, wind_vel, airspeed, wind_speed, signed_track_error, track_proximity);
+
+//    lateral_accel_ = calcLateralAccel(air_vel, air_vel_ref, airspeed, p_gain_adj_);//lateral_accel_curv_adj_;
+
+//    double wind_cross_upt, wind_dot_upt;
+//    trigWindToBearing(wind_cross_upt, wind_dot_upt, wind_vel, unit_path_tangent);
+//    double pc_ste = path_curvature_ * signed_track_error;
+    lateral_accel_ = calcLateralAccel(air_vel, air_vel_ref, airspeed, p_gain_adj_) + lateral_accel_curv_adj_;
+
 } // evaluate
 
 double NPFG::adjustLateralAccelForCurvature(const Eigen::Vector2d& unit_path_tangent, const Eigen::Vector2d& ground_vel, const Eigen::Vector2d& wind_vel,
-    const double airspeed, const double wind_speed, const double track_error, const double inv_track_proximity)
+    const double airspeed, const double wind_speed, const double signed_track_error, const double track_proximity)
 {
     // solve the wind triangle w.r.t. unit path tangent
     double wind_cross_upt, wind_dot_upt;
     trigWindToBearing(wind_cross_upt, wind_dot_upt, wind_vel, unit_path_tangent);
 
     // determine feasibility of following unit path tangent
-    const double feas0 = calcBearingFeas(wind_cross_upt, wind_dot_upt, airspeed, wind_speed);
+    feas0_ = calcBearingFeas(wind_cross_upt, wind_dot_upt, airspeed, wind_speed);
 
-    // calculate on track speed ratio
-    const double airspeed_dot_upt = projectAirspOnBearing(airspeed, wind_cross_upt);
-    const double speed_ratio = 1.0 + ((abs(airspeed_dot_upt) < EPSILON) ? 0.0 : wind_dot_upt / airspeed_dot_upt); // TODO: is that 1.0 always ok?
+    double pc_ste = path_curvature_ * signed_track_error;
 
-    // ground relative turn rate
-    const double err_per_radius = path_curvature_ * track_error;
-    const double turn_rate = (err_per_radius < 1.0 - EPSILON) ?
-        path_curvature_ * std::max(ground_vel.dot(unit_path_tangent), 0.0) / (1.0 - err_per_radius) : 0.0; // TODO: is this correct handling?
-
-    return turn_rate * speed_ratio * feas_ * feas0 * inv_track_proximity;
+    return airspeed * track_proximity * feas0_ * feas_ * (1 + wind_dot_upt / projectAirspOnBearing(airspeed, wind_cross_upt)) *
+        path_curvature_ * std::max(ground_vel.dot(unit_path_tangent), 0.0) / (1 - ((pc_ste < 1 - EPSILON) ? pc_ste : 1 - EPSILON));
 }
+
+void NPFG::adjustRefAirVelForCurvatureOld(Eigen::Vector2d &air_vel_ref, const Eigen::Vector2d &wind_vel, const Eigen::Vector2d &unit_path_tangent,
+    const double wind_speed, const double airspeed, const double feas, const double track_proximity, const double p_gain_adj,
+    bool use_backwards_solution)
+{
+    double wind_cross_bearing, wind_dot_bearing;
+    trigWindToBearing(wind_cross_bearing, wind_dot_bearing, wind_vel, unit_path_tangent);
+
+    if (bearingIsFeasible(wind_cross_bearing, wind_dot_bearing, airspeed, wind_speed)) {
+        double airsp_dot_bearing = projectAirspOnBearing(airspeed, wind_cross_bearing);
+        if (use_backwards_solution) {
+            airsp_dot_bearing *= -1.0;
+        }
+        const double ground_speed = wind_dot_bearing + airsp_dot_bearing;
+        feas0_ = calcBearingFeas(wind_cross_bearing, wind_dot_bearing, airspeed, wind_speed);
+
+        const double sin_eta_curv = track_proximity * feas * feas0_ * ground_speed * path_curvature_ / airspeed / p_gain_adj * (1.0 + wind_dot_bearing / airsp_dot_bearing);
+        const double cos_eta_curv = sqrt(std::max(1.0 - sin_eta_curv * sin_eta_curv, 0.0));
+
+        air_vel_ref = rotate2d(sin_eta_curv, cos_eta_curv, air_vel_ref);
+    }
+} // adjustRefAirVelForCurvature

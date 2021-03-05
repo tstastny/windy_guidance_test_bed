@@ -16,11 +16,13 @@ class NPFG {
         // gets
         double getAirspeedRef() { return airspeed_ref_; }
         double getBearingFeas() { return feas_; }
+        double getBearingFeas0() { return feas0_; }
         Eigen::Vector2d getBearingVec() { return bearing_vec_; }
         double getLateralAccel() { return lateral_accel_; }
         double getPGainAdj() { return p_gain_adj_; }
         double getTrackErrorBound() { return track_error_bound_; }
         double getGroundSpMinE() { return min_ground_speed_e_; }
+        double getLateralAccelCurvAdj() { return lateral_accel_curv_adj_; }
 
         // sets
         void enableBackwardsSolution(double en) { en_backwards_solution_ = en; }
@@ -52,7 +54,9 @@ class NPFG {
         static constexpr double EPSILON = 1.0e-4;
 
         double feas_;                   // bearing feasibility
+        double feas0_;
         double lateral_accel_;          // lateral acceleration setpoint [m/s^2]
+        double lateral_accel_curv_adj_;          // lateral acceleration setpoint [m/s^2]
         double path_curvature_;         // path curvature
 
         double track_error_bound_;      // track error boundary [m]
@@ -105,6 +109,8 @@ class NPFG {
         double calcRefAirspeed(const Eigen::Vector2d &wind_vel, const Eigen::Vector2d &bearing_vec,
             const double wind_cross_bearing, const double wind_dot_bearing, const double wind_speed, const double min_ground_speed);
         void adjustRefAirVelForCurvature(Eigen::Vector2d &air_vel_ref, const Eigen::Vector2d &wind_vel, const Eigen::Vector2d &unit_path_tangent,
+            const double wind_speed, const double airspeed, const double feas, const double track_proximity, const double p_gain_adj, bool use_backwards_solution);
+        void adjustRefAirVelForCurvatureOld(Eigen::Vector2d &air_vel_ref, const Eigen::Vector2d &wind_vel, const Eigen::Vector2d &unit_path_tangent,
             const double wind_speed, const double airspeed, const double feas, const double track_proximity, const double p_gain_adj, bool use_backwards_solution);
         double calcLateralAccel(const Eigen::Vector2d &air_vel, const Eigen::Vector2d &air_vel_ref, const double airspeed, const double p_gain_adj);
         bool backwardsSolutionOK(const double wind_speed, const double airspeed, const double min_ground_speed, const double track_error);
