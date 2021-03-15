@@ -20,43 +20,46 @@ import pysrc.plotting as pl
 
 # define UAV initial state
 tc_roll = 0.5
-uav = se.Aircraft(np.array([-20.0, 0.0]),    # position
-                  12.0,                     # airspeed
-                  np.deg2rad(-90.0),        # heading
+uav = se.Aircraft(np.array([-50.0, -50.0]),    # position
+                  15.0,                     # airspeed
+                  np.deg2rad(0.0),        # heading
                   0.0,                      # roll
                   1.0,                      # airspeed time constant
                   tc_roll)                      # roll time constant
 
 # paths
 loit1 = cpp.Loiter([0.0, 0.0],  # position
-                   20.0,        # radius
+                   100.0,        # radius
                    1)           # dir
 
 # disturbances
-wind = se.Wind(np.array([0.0, 0.0]))
+wind = se.Wind(np.array([10.0, 0.0]))
 
 # control
 npfg = cpp.NPFG()
 # airspeed reference compensation
-airspeed_nom = 12.0
-airspeed_max = 12.0
+airspeed_nom = 15.0
+airspeed_max = 15.0
 min_ground_speed_g = 0.0
 npfg.enableFeedForwardAirVelRef(True)
 npfg.enableMinGroundSpeed(False)
 npfg.enableTrackKeeping(False)
 npfg.enableWindExcessRegulation(False)
+npfg.enablePeriodLowerBound(True)
+npfg.enablePeriodUpperBound(False)
 npfg.setAirspeedMax(airspeed_max)
 npfg.setAirspeedNom(airspeed_nom)
 npfg.setMinGroundSpeed(min_ground_speed_g)
 npfg.setMinGroundSpeedEMax(6.0)
 npfg.setNominalHeadingRate(9.81 * np.tan(np.deg2rad(35.0)) / airspeed_nom)
 npfg.setNTEFraction(0.5)
+npfg.setTrackProximityFraction(0.5)
 # tuning
-period_0 = 30
-damping_0 = 0.25
+period_0 = 25
+damping_0 = 0.75
 npfg.setPeriod(period_0)
 npfg.setDamping(damping_0)
-roll_lim = np.deg2rad(45.0)
+roll_lim = np.deg2rad(35.0)
 # other params
 npfg.setWindRatioBuf(0.1)
 npfg.enableBackwardsSolution(False)
@@ -81,7 +84,8 @@ sim_data['tuning'] = {
     'min nom period': np.zeros(n_sim),
     'max turn rate': np.zeros(n_sim),
     'no wind turn rate': np.zeros(n_sim),
-    'nom period': np.zeros(n_sim)
+    'nom period': np.zeros(n_sim),
+    'adapted period': np.zeros(n_sim)
 }
 
 sim_data['aircraft states'] = {
@@ -145,8 +149,8 @@ for k in range(n_sim):
         # wind_vel_est = (wind.vel - wind_vel_est) / 1.0 * est_interval * dt_sim + wind_vel_est
         ground_vel = uav.vel(wind.vel)
         wind_vel_est = ground_vel - (uav.airspeed() + d_airspeed) * (ground_vel - wind.vel) / np.linalg.norm(ground_vel - wind.vel)
-        # wind_vel_est[0] = 0
-        # wind_vel_est[1] = 0
+        wind_vel_est[0] = 0
+        wind_vel_est[1] = 0
 
     # control the aircraft ---------------------------------------------------------------------------------------------
     if np.mod(k, ctrl_interval) == 0 or k == 0:
@@ -169,16 +173,17 @@ for k in range(n_sim):
     nowind_turn_rate = uav.airspeed() * loit1.getCurvature()
     crit_wind_factor = 2.0 * (1 - np.sqrt(1.0 - wind.speed() / uav.airspeed()))
     sim_data['tuning']['max nom period'][k] = \
-        4.0 * np.pi * damping_0 / (nowind_turn_rate * crit_wind_factor) if damping_0 < 0.7071 else np.pi / (damping_0 * nowind_turn_rate * crit_wind_factor)
+        4.0 * np.pi * damping_0 / (nowind_turn_rate * crit_wind_factor) if damping_0 < 0.5 else np.pi / (damping_0 * nowind_turn_rate * crit_wind_factor)
     sim_data['tuning']['min nom period'][k] = \
         2.0 * np.pi * (np.sqrt(damping_0**2 * (nowind_turn_rate * crit_wind_factor * tc_roll)**2 + nowind_turn_rate * crit_wind_factor * tc_roll) \
         + damping_0 * (nowind_turn_rate * crit_wind_factor * tc_roll - 1)) / nowind_turn_rate / crit_wind_factor \
         if nowind_turn_rate * crit_wind_factor > 0.0 else np.pi * tc_roll / damping_0
     sim_data['tuning']['max turn rate'][k] = \
-        8.0 * damping_0**2 / (crit_wind_factor * tc_roll * (4.0 * damping_0**2 + 1.0)) if damping_0 < 0.7071 else \
+        8.0 * damping_0**2 / (crit_wind_factor * tc_roll * (4.0 * damping_0**2 + 1.0)) if damping_0 < 0.5 else \
         (4.0 * damping_0**2 + 1.0) / (8.0 * crit_wind_factor * tc_roll * damping_0**2)
     sim_data['tuning']['no wind turn rate'][k] = nowind_turn_rate
     sim_data['tuning']['nom period'][k] = period_0
+    sim_data['tuning']['adapted period'][k] = npfg.getTimeConst() / damping_0
 
     # aircraft states
     sim_data['aircraft states']['position'][:, k] = uav.pos()
@@ -209,7 +214,7 @@ for k in range(n_sim):
     loit1.updateState(uav.pos(), uav.vel(wind.vel))  # get ground truth values
     sim_data['path following']['track error'][k] = loit1.getTrackError()
     sim_data['path following']['track error bound'][k] = npfg.getTrackErrorBound()
-    sim_data['path following']['ff accel'][k] = npfg.getLateralAccelCurvAdj()
+    sim_data['path following']['ff accel'][k] = npfg.getLateralAccelCurv()
     sim_data['path following']['feas'][k] = npfg.getBearingFeas()
     sim_data['path following']['feas0'][k] = npfg.getBearingFeas0()
 
@@ -298,6 +303,7 @@ ax_heading.plot(sim_data['time'], np.rad2deg(sim_data['aircraft states']['headin
 
 # roll plot ----------------------------------------
 ax_roll = fig_states.add_subplot(grid_states[2], xticklabels=[], ylabel='Roll [deg]')
+ax_roll.plot(sim_data['time'], np.rad2deg(np.arctan(sim_data['tuning']['max turn rate'] * uav.airspeed() / uav.ONE_G)), color='tab:red')
 ax_roll.plot(sim_data['time'], np.rad2deg(sim_data['aircraft controls']['roll ref']), color=ref_color)
 ax_roll.plot(sim_data['time'], np.rad2deg(sim_data['aircraft states']['roll']), color=state_color)
 # ax_roll = fig_states.add_subplot(grid_states[2], xticklabels=[], ylabel='FF Lat Accel [m/s2]')
@@ -349,12 +355,13 @@ ax_period = fig_tuning.add_subplot(grid_tuning[0], xticklabels=[], ylabel='Perio
 ax_period.plot(sim_data['time'], sim_data['tuning']['max nom period'], linestyle='-.', color=ref_color, label='Max. Nom. Period')
 ax_period.plot(sim_data['time'], sim_data['tuning']['min nom period'], color=ref_color, label='Min. Nom. Period')
 ax_period.plot(sim_data['time'], sim_data['tuning']['nom period'], color=state_color, label='Nom. Period')
+ax_period.plot(sim_data['time'], sim_data['tuning']['adapted period'], color='tab:orange', label='Adapt. Period')
 ax_period.legend()
 
 # turn rate plot ----------------------------------------
-ax_tr = fig_tuning.add_subplot(grid_tuning[1], xticklabels=[], ylabel=' (no wind) Turn Rate [deg/s]')
-ax_tr.plot(sim_data['time'], np.rad2deg(sim_data['tuning']['max turn rate']), color=ref_color, label='Max. Turn Rate')
-ax_tr.plot(sim_data['time'], np.rad2deg(sim_data['tuning']['no wind turn rate']), color=state_color, label='Turn Rate')
+ax_tr = fig_tuning.add_subplot(grid_tuning[1], xticklabels=[], ylabel=' Radius [m]')
+ax_tr.plot(sim_data['time'], uav.airspeed() * np.reciprocal(sim_data['tuning']['max turn rate']), color=ref_color, label='Min. Radius')
+ax_tr.plot(sim_data['time'], uav.airspeed() * np.reciprocal(sim_data['tuning']['no wind turn rate']), color=state_color, label='Radius')
 ax_tr.legend()
 
 # turn rate plot ----------------------------------------

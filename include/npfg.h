@@ -19,10 +19,11 @@ class NPFG {
         double getBearingFeas0() { return feas0_; }
         Eigen::Vector2d getBearingVec() { return bearing_vec_; }
         double getLateralAccel() { return lateral_accel_; }
-        double getPGainAdj() { return p_gain_adj_; }
+        double getPGain() { return p_gain_; }
+        double getTimeConst() { return time_const_; }
         double getTrackErrorBound() { return track_error_bound_; }
         double getGroundSpMinE() { return min_ground_speed_e_; }
-        double getLateralAccelCurvAdj() { return lateral_accel_curv_adj_; }
+        double getLateralAccelCurv() { return lateral_accel_curv_; }
 
         // sets
         void enableBackwardsSolution(double en) { en_backwards_solution_ = en; }
@@ -30,6 +31,8 @@ class NPFG {
         void enableMinGroundSpeed(double en) { en_min_ground_speed_ = en; }
         void enableTrackKeeping(double en) { en_track_keeping_ = en; }
         void enableWindExcessRegulation(double en) { en_wind_excess_regulation_ = en; }
+        void enablePeriodLowerBound(double en) { en_period_lower_bound_ = en; }
+        void enablePeriodUpperBound(double en) { en_period_upper_bound_ = en; }
         void setAirspeedMax(double airspeed_max) { airspeed_max_ = airspeed_max; }
         void setAirspeedNom(double airspeed_nom) { airspeed_nom_ = airspeed_nom; }
         void setMinGroundSpeed(double min_ground_speed) { min_ground_speed_g_ = std::max(min_ground_speed, 0.0); }
@@ -40,6 +43,7 @@ class NPFG {
         void setPeriod(double period) { period_ = period; }
         void setDamping(double damping) { damping_ = damping; }
         void setWindRatioBuf(double wind_ratio_buf) { wind_ratio_buf_ = wind_ratio_buf; }
+        void setTrackProximityFraction(double tpf) { track_proximity_fraction_ = tpf; }
 
         // public functions
         void evaluate(const Eigen::Vector2d &aircraft_pos, const Eigen::Vector2d &ground_vel, const Eigen::Vector2d &wind_vel,
@@ -50,20 +54,19 @@ class NPFG {
         static constexpr double LAMBDA_CO = 0.02;                           // linear finite cut-off angle [rad] (= approx. 1 deg)
         static constexpr double ONE_OVER_S_LAMBDA_CO = 50.003333488895450;  // 1/sin(lambda_co)
         static constexpr double M_CO = 2499.833309998360;                   // linear finite cut-off slope = cos(lambda_co)/sin(lambda_co)^2
-        static constexpr double P_GAIN_MIN_MULT = 1.1;                      // multiplied safety factor to keep minimum gain above what is necessary for convergence
         static constexpr double EPSILON = 1.0e-4;
+//        static constexpr double MIN_AIRSPEED = 0.1;                         // minimum allowed airspeed.. otherwise singularities!
 
         double feas_;                   // bearing feasibility
         double feas0_;
         double lateral_accel_;          // lateral acceleration setpoint [m/s^2]
-        double lateral_accel_curv_adj_;          // lateral acceleration setpoint [m/s^2]
+        double lateral_accel_curv_;          // lateral acceleration setpoint [m/s^2]
         double path_curvature_;         // path curvature
 
         double track_error_bound_;      // track error boundary [m]
         Eigen::Vector2d bearing_vec_;   // unit bearing vector
 
         double p_gain_;                 // multiplied proportional gain
-        double p_gain_adj_;             // (possibly adjusted) proportional gain (accounting for minimum)
         double time_const_;             // look-ahead time constant [s]
 
         double period_;
@@ -88,19 +91,28 @@ class NPFG {
 
         double nom_heading_rate_;           // maximum heading rate at nominal airspeed (user is responsible for computing externally) [rad/s]
 
+        bool en_period_lower_bound_;
+        bool en_period_upper_bound_;
+
+        double track_proximity_fraction_;
+
         // private functions
-        void calcPGain();
-        void calcTimeConst();
+        double calcTrackProximityOnly(const double normalized_track_error);
+        double periodLB(double airspeed, double wind_ratio);
+        double periodUB(double airspeed, double wind_ratio);
+        double periodUB(const double airspeed, const double wind_ratio, const double wind_cross_upt, const double wind_dot_upt, const double wind_speed);
+        void calcPGain(double period);
+        void calcTimeConst(double period);
+        void calcGains(const double ground_speed, const double airspeed, const double wind_ratio, const double track_error, const Eigen::Vector2d& wind_vel, const Eigen::Vector2d& upt);
         double calcTrackErrorBound(const double ground_speed);
         double calcLookAheadAngle(const double normalized_track_error);
         Eigen::Vector2d calcBearingVec(double &track_proximity, double &inv_track_proximity,
             const Eigen::Vector2d &unit_track_error, const Eigen::Vector2d &unit_path_tangent, const double look_ahead_angle);
-        double adjustPGain(const double wind_ratio, const double normalized_track_error);
         double calcMinGroundSpeed(const double normalized_track_error);
         void trigWindToBearing(double &wind_cross_bearing, double &wind_dot_bearing, const Eigen::Vector2d &wind_vel, const Eigen::Vector2d &bearing_vec);
         double projectAirspOnBearing(const double airspeed, const double wind_cross_bearing);
         int bearingIsFeasible(const double wind_cross_bearing, const double wind_dot_bearing, const double airspeed, const double wind_speed);
-        double calcBearingFeas(const double wind_cross_bearing, const double wind_dot_bearing, const double airspeed, const double wind_speed);
+        double calcBearingFeas(const double wind_cross_bearing, const double wind_dot_bearing, const double wind_speed, const double wind_ratio);
         Eigen::Vector2d calcRefAirVelocityFF(const Eigen::Vector2d &wind_vel, const Eigen::Vector2d &bearing_vec,
             const double wind_cross_bearing, const double wind_dot_bearing, const double wind_speed, const double min_ground_speed, bool use_backwards_solution);
         Eigen::Vector2d calcRefAirVelocityFB(const Eigen::Vector2d &wind_vel, const Eigen::Vector2d &bearing_vec,
@@ -108,14 +120,10 @@ class NPFG {
         Eigen::Vector2d calcInfeasibleAirVelRef(const Eigen::Vector2d &wind_vel, const Eigen::Vector2d &bearing_vec, const double wind_speed, const double airspeed);
         double calcRefAirspeed(const Eigen::Vector2d &wind_vel, const Eigen::Vector2d &bearing_vec,
             const double wind_cross_bearing, const double wind_dot_bearing, const double wind_speed, const double min_ground_speed);
-        void adjustRefAirVelForCurvature(Eigen::Vector2d &air_vel_ref, const Eigen::Vector2d &wind_vel, const Eigen::Vector2d &unit_path_tangent,
-            const double wind_speed, const double airspeed, const double feas, const double track_proximity, const double p_gain_adj, bool use_backwards_solution);
-        void adjustRefAirVelForCurvatureOld(Eigen::Vector2d &air_vel_ref, const Eigen::Vector2d &wind_vel, const Eigen::Vector2d &unit_path_tangent,
-            const double wind_speed, const double airspeed, const double feas, const double track_proximity, const double p_gain_adj, bool use_backwards_solution);
-        double calcLateralAccel(const Eigen::Vector2d &air_vel, const Eigen::Vector2d &air_vel_ref, const double airspeed, const double p_gain_adj);
+        double calcLateralAccel(const Eigen::Vector2d &air_vel, const Eigen::Vector2d &air_vel_ref, const double airspeed);
+        double calcLateralAccelForCurvature(const Eigen::Vector2d& unit_path_tangent, const Eigen::Vector2d& ground_vel, const Eigen::Vector2d& wind_vel,
+            const double airspeed, const double wind_speed, const double wind_ratio, const double signed_track_error, const double track_proximity);
         bool backwardsSolutionOK(const double wind_speed, const double airspeed, const double min_ground_speed, const double track_error);
-        double adjustLateralAccelForCurvature(const Eigen::Vector2d& unit_path_tangent, const Eigen::Vector2d& ground_vel, const Eigen::Vector2d& wind_vel,
-            const double airspeed, const double wind_speed, const double track_error, const double inv_track_proximity);
 
 }; // class NPFG
 

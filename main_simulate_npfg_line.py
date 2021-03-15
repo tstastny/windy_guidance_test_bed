@@ -19,8 +19,8 @@ import pysrc.plotting as pl
 # simulation setup
 
 # define UAV initial state
-uav = se.Aircraft(np.array([0.0, 10.0]),    # position
-                  10.0,                     # airspeed
+uav = se.Aircraft(np.array([0.0, 5.0]),    # position
+                  12.0,                     # airspeed
                   np.deg2rad(-90.0),        # heading
                   0.0,                      # roll
                   1.0,                      # airspeed time constant
@@ -36,8 +36,8 @@ wind = se.Wind(np.array([0.0, -5.0]))
 # control
 npfg = cpp.NPFG()
 # airspeed reference compensation
-airspeed_nom = 10.0
-airspeed_max = 16.0
+airspeed_nom = 12.0
+airspeed_max = 12.0
 min_ground_speed_g = 0.0
 npfg.enableFeedForwardAirVelRef(True)
 npfg.enableMinGroundSpeed(False)
@@ -128,9 +128,9 @@ for k in range(n_sim):
 
         # propagate (note: at k=0 no delta) -- assuming something similar to EKF tuned for 1.0m/s/s wind noise
         # wind_vel_est = (wind.vel - wind_vel_est) / 1.0 * est_interval * dt_sim + wind_vel_est
-        wind_vel_est = (wind.speed() + d_wind_speed) * np.array([np.cos(wind.dir() + d_wind_dir), np.sin(wind.dir() + d_wind_dir)])
-        # wind_vel_est[0] = 0
-        # wind_vel_est[1] = 0
+        # wind_vel_est = (wind.speed() + d_wind_speed) * np.array([np.cos(wind.dir() + d_wind_dir), np.sin(wind.dir() + d_wind_dir)])
+        wind_vel_est[0] = 0
+        wind_vel_est[1] = 0
 
     # control the aircraft ---------------------------------------------------------------------------------------------
     if np.mod(k, ctrl_interval) == 0 or k == 0:
