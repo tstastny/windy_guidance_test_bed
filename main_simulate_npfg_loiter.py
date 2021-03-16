@@ -19,8 +19,8 @@ import pysrc.plotting as pl
 # simulation setup
 
 # define UAV initial state
-tc_roll = 0.5
-uav = se.Aircraft(np.array([-50.0, -50.0]),    # position
+tc_roll = 1.0
+uav = se.Aircraft(np.array([-50.0, -100.0]),    # position
                   15.0,                     # airspeed
                   np.deg2rad(0.0),        # heading
                   0.0,                      # roll
@@ -29,11 +29,11 @@ uav = se.Aircraft(np.array([-50.0, -50.0]),    # position
 
 # paths
 loit1 = cpp.Loiter([0.0, 0.0],  # position
-                   100.0,        # radius
+                   30.0,        # radius
                    1)           # dir
 
 # disturbances
-wind = se.Wind(np.array([10.0, 0.0]))
+wind = se.Wind(np.array([0.0, 14.0]))
 
 # control
 npfg = cpp.NPFG()
@@ -45,7 +45,7 @@ npfg.enableFeedForwardAirVelRef(True)
 npfg.enableMinGroundSpeed(False)
 npfg.enableTrackKeeping(False)
 npfg.enableWindExcessRegulation(False)
-npfg.enablePeriodLowerBound(True)
+npfg.enablePeriodLowerBound(False)
 npfg.enablePeriodUpperBound(False)
 npfg.setAirspeedMax(airspeed_max)
 npfg.setAirspeedNom(airspeed_nom)
@@ -53,13 +53,14 @@ npfg.setMinGroundSpeed(min_ground_speed_g)
 npfg.setMinGroundSpeedEMax(6.0)
 npfg.setNominalHeadingRate(9.81 * np.tan(np.deg2rad(35.0)) / airspeed_nom)
 npfg.setNTEFraction(0.5)
-npfg.setTrackProximityFraction(0.5)
+npfg.setTrackProximityFraction(1.0)
 # tuning
-period_0 = 25
-damping_0 = 0.75
+period_0 = 40
+damping_0 = 0.7071
+gsp_fb = True
 npfg.setPeriod(period_0)
 npfg.setDamping(damping_0)
-roll_lim = np.deg2rad(35.0)
+roll_lim = np.deg2rad(80.0)
 # other params
 npfg.setWindRatioBuf(0.1)
 npfg.enableBackwardsSolution(False)
@@ -149,8 +150,9 @@ for k in range(n_sim):
         # wind_vel_est = (wind.vel - wind_vel_est) / 1.0 * est_interval * dt_sim + wind_vel_est
         ground_vel = uav.vel(wind.vel)
         wind_vel_est = ground_vel - (uav.airspeed() + d_airspeed) * (ground_vel - wind.vel) / np.linalg.norm(ground_vel - wind.vel)
-        wind_vel_est[0] = 0
-        wind_vel_est[1] = 0
+        if gsp_fb:
+            wind_vel_est[0] = 0
+            wind_vel_est[1] = 0
 
     # control the aircraft ---------------------------------------------------------------------------------------------
     if np.mod(k, ctrl_interval) == 0 or k == 0:
@@ -171,12 +173,12 @@ for k in range(n_sim):
 
     # tuning bounds
     nowind_turn_rate = uav.airspeed() * loit1.getCurvature()
-    crit_wind_factor = 2.0 * (1 - np.sqrt(1.0 - wind.speed() / uav.airspeed()))
+    crit_wind_factor = 2.0 * (1.0 - np.sqrt(1.0 - wind.speed() / uav.airspeed()))
     sim_data['tuning']['max nom period'][k] = \
         4.0 * np.pi * damping_0 / (nowind_turn_rate * crit_wind_factor) if damping_0 < 0.5 else np.pi / (damping_0 * nowind_turn_rate * crit_wind_factor)
     sim_data['tuning']['min nom period'][k] = \
-        2.0 * np.pi * (np.sqrt(damping_0**2 * (nowind_turn_rate * crit_wind_factor * tc_roll)**2 + nowind_turn_rate * crit_wind_factor * tc_roll) \
-        + damping_0 * (nowind_turn_rate * crit_wind_factor * tc_roll - 1)) / nowind_turn_rate / crit_wind_factor \
+        2.0 * np.pi * (np.sqrt(damping_0**2 * (nowind_turn_rate * crit_wind_factor * tc_roll - 1)**2 + nowind_turn_rate * crit_wind_factor * tc_roll) \
+        + damping_0 * (nowind_turn_rate * crit_wind_factor * tc_roll - 1)) / (nowind_turn_rate * crit_wind_factor) \
         if nowind_turn_rate * crit_wind_factor > 0.0 else np.pi * tc_roll / damping_0
     sim_data['tuning']['max turn rate'][k] = \
         8.0 * damping_0**2 / (crit_wind_factor * tc_roll * (4.0 * damping_0**2 + 1.0)) if damping_0 < 0.5 else \

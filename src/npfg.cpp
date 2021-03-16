@@ -55,7 +55,7 @@ double NPFG::periodUB(const double airspeed, const double wind_ratio, const doub
 }
 
 double NPFG::periodLB(const double airspeed, const double wind_ratio) {
-    const double tc_roll = 0.5;
+    const double tc_roll = 1.0;
     const double turn_rate = airspeed * path_curvature_;
     const double crit_wind_factor = 2.0 * (1.0 - sqrt(1.0 - wind_ratio));
     const double omf = turn_rate * crit_wind_factor;
@@ -63,6 +63,43 @@ double NPFG::periodLB(const double airspeed, const double wind_ratio) {
     const double omft_m_1 = omft - 1;
     return (omf != 0.0) ? 2.0 * M_PI / omf * ( sqrt(omft_m_1 * omft_m_1 * damping_ * damping_ + omft) + omft_m_1 * damping_ ) : M_PI * tc_roll / damping_;
 }
+
+void NPFG::calcGains(const double ground_speed, const double airspeed, const double wind_ratio, const double track_error, const Eigen::Vector2d& wind_vel, const Eigen::Vector2d& upt)
+{
+    double period = period_;
+    if (en_period_lower_bound_) {
+        // lower bound the period for stability w.r.t. roll time constant and current flight condition
+        const double period_lb = periodLB(airspeed, wind_ratio);
+        period = std::max(period_lb, period);
+
+        // only allow upper bounding if lower bounding is enabled
+        if (en_period_upper_bound_) {
+            // NOTE: if the roll time constant is not accurately known, reducing the period here can destabilize the system!
+            //       enable this feature at your own risk!
+
+            // upper bound the period (track keeping stability), prefer lower bound if enabled and violated
+            const double period_ub = periodUB(airspeed, wind_ratio);
+            const double period_adapted = (period_ub > period_lb) ? std::min(period, period_ub) : period_lb;
+//            double wind_cross_upt, wind_dot_upt;
+//            trigWindToBearing(wind_cross_upt, wind_dot_upt, wind_vel, upt);
+//            const double period_ub = constrain(period, period_lb, periodUB(airspeed, wind_ratio, wind_cross_upt, wind_dot_upt, wind_vel.norm())); // note: constrain() checks min first
+
+            // recalculate time constant (needed for track proximity calculation)
+            calcTimeConst(period);
+
+            const double normalized_track_error = constrain(track_error / calcTrackErrorBound(ground_speed), 0.0, 1.0);
+
+            // calculate nominal track proximity with lower bounded time constant
+            // (only a num. sol. can find corresponding track proximity and adapted gains simultaneously)
+            const double track_proximity = std::max(calcTrackProximityOnly(normalized_track_error) + track_proximity_fraction_ - 1.0, 0.0) / track_proximity_fraction_;
+
+            // transition from the nominal period to the adapted period as we get closer to the track
+            period = period_adapted * track_proximity + (1.0 - track_proximity) * period;
+        }
+    }
+    calcPGain(period);
+    calcTimeConst(period);
+} // calcGains
 
 void NPFG::calcPGain(const double period)
 {
@@ -355,42 +392,6 @@ bool NPFG::backwardsSolutionOK(const double wind_speed, const double airspeed, c
         return false;
     }
 } // backwardsSolutionOK
-
-void NPFG::calcGains(const double ground_speed, const double airspeed, const double wind_ratio, const double track_error, const Eigen::Vector2d& wind_vel, const Eigen::Vector2d& upt)
-{
-    double period = period_;
-    if (en_period_lower_bound_) {
-        // lower bound the period for stability w.r.t. roll time constant and current flight condition
-        const double period_lb = periodLB(airspeed, wind_ratio);
-        period = std::max(period_lb, period);
-
-        // only allow upper bounding if lower bounding is enabled
-        if (en_period_upper_bound_) {
-            // NOTE: if the roll time constant is not accurately known, reducing the period here can destabilize the system!
-            //       enable this feature at your own risk!
-
-            // upper bound the period (track keeping stability), prefer lower bound if enabled and violated
-            period = constrain(period, period_lb, periodUB(airspeed, wind_ratio)); // note: constrain() checks min first
-//            double wind_cross_upt, wind_dot_upt;
-//            trigWindToBearing(wind_cross_upt, wind_dot_upt, wind_vel, upt);
-//            period = constrain(period, period_lb, periodUB(airspeed, wind_ratio, wind_cross_upt, wind_dot_upt, wind_vel.norm())); // note: constrain() checks min first
-
-            // recalculate time constant (needed for track proximity calculation)
-            calcTimeConst(period);
-
-            const double normalized_track_error = constrain(track_error / calcTrackErrorBound(ground_speed), 0.0, 1.0);
-
-            // calculate nominal track proximity with lower bounded time constant
-            // (only a num. sol. can find corresponding track proximity and adapted gains simultaneously)
-            const double track_proximity = std::max(calcTrackProximityOnly(normalized_track_error) + track_proximity_fraction_ - 1.0, 0.0) / track_proximity_fraction_;
-
-            // transition from the nominal period to the adapted period as we get closer to the track
-            period = period * track_proximity + (1.0 - track_proximity) * period_;
-        }
-    }
-    calcPGain(period);
-    calcTimeConst(period);
-} // calcGains
 
 double NPFG::calcLateralAccelForCurvature(const Eigen::Vector2d& unit_path_tangent, const Eigen::Vector2d& ground_vel, const Eigen::Vector2d& wind_vel,
     const double airspeed, const double wind_speed, const double wind_ratio, const double signed_track_error, const double track_proximity)
